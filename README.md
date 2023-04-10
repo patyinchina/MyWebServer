@@ -1,2 +1,2 @@
 # MyWebServer
-A tiny webserver using C++
+Linux系统C++轻量级Webserver学习
