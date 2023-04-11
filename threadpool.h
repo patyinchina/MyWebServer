@@ -49,7 +49,7 @@ namespace mywebserver{
                 delete [] m_threads;
                 throw std::exception();
             }  // worker must be a static funtion !!
-            if(pthread_detach(m_thread[i])!=0){
+            if(pthread_detach(m_threads[i])!=0){
                 delete [] m_threads;
                 throw std::exception();
             }

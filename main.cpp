@@ -13,7 +13,10 @@
 #include "threadpool.h"
 #include "http_conn.h"
 #define MAX_FD 65535 
+#define MAX_EVENT_NUM 50000 
+
 using namespace mywebserver;
+
 // signal capture
 void addsig(int sig, void(handler)(int)){
     struct sigaction sa;
@@ -22,6 +25,14 @@ void addsig(int sig, void(handler)(int)){
     sigfillset(&sa.sa_mask);
     sigaction(sig,&sa,NULL);
 }
+
+// add fd into epoll
+extern void addfd(int epollfd,int fd,bool one_shot);
+// remove fd from epoll
+extern void removefd(int epollfd,int fd);
+// modify fd
+extern void modfd(int epollfd,int fd,int ev);
+
 int main(int argc, char* argv[]){
 
     if(argc<=1){
@@ -42,6 +53,81 @@ int main(int argc, char* argv[]){
 
     // create an array to save information of clients
     http_conn* users=new http_conn[MAX_FD];
+
+    // socket
+    int listenfd=socket(AF_INET,SOCK_STREAM,0);
+
+    // reusable port 
+    int reuse=1;
+    setsockopt(listenfd,SOL_SOCKET,SO_REUSEADDR,&reuse,sizeof(reuse));
+    struct sockaddr_in saddr;
+    saddr.sin_family=AF_INET;
+    saddr.sin_port=htons(port);
+    // inet_pton(AF_INET,"127.0.0.1",&saddr.sin_addr.s_addr);
+    saddr.sin_addr.s_addr=INADDR_ANY;
+
+    bind(listenfd,(struct sockaddr*)&saddr,sizeof(saddr));
+    listen(listenfd,10);
+
+    // epoll
+    epoll_event events[MAX_EVENT_NUM];
+    int epollfd=epoll_create(10);
+
+    addfd(epollfd,listenfd,false);
+    http_conn::m_epollfd=epollfd;
+    http_conn::m_user_count=0;
+
+    while(1){
+        int num=epoll_wait(epollfd,events,MAX_EVENT_NUM,-1);
+        if(num<0&&errno!=EINTR){
+            std::cout<<"epoll failure"<<std::endl;
+            exit(-1);
+        }
+
+        for(int i=0;i<num;i++){
+            int sockfd=events[i].data.fd;
+            if(sockfd==listenfd){
+                // a client is connenting
+                struct sockaddr_in caddr;
+                socklen_t clen=sizeof(caddr);
+                int connfd=accept(listenfd,(struct sockaddr*)&caddr,&clen);
+                if(http_conn::m_user_count>=MAX_FD){
+                    // server is busy
+                    // ... // inform the conneting client
+                    close(connfd);
+                    continue;
+                }
+                std::cout<<"connection created"<<std::endl;
+                // initialize new connection
+                users[connfd].init(connfd,caddr); // 采用文件描述符作为索引
+            }
+            else if(events[i].events&(EPOLLRDHUP|EPOLLHUP|EPOLLERR)){
+                // abnormal event of error
+                users[sockfd].close_conn();
+            }
+            else if(events[i].events&EPOLLIN){
+                if(users[sockfd].read()){
+                    // read all data
+                    std::cout<<"read request"<<std::endl;
+                    pool->add_request(users+sockfd);
+                }
+                else{
+                    std::cout<<"read error"<<std::endl;
+                    users[sockfd].close_conn();
+                }
+            }
+            else if(events[i].events&EPOLLOUT){
+                // write all data
+                if(!users[sockfd].write()){
+                    users[sockfd].close_conn();
+                }
+            }
+        }
+    }
+    close(epollfd);
+    close(listenfd);
+    delete [] users;
+    delete pool;
 
     return 0;
 }
