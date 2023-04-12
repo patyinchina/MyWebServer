@@ -27,7 +27,7 @@ void addsig(int sig, void(handler)(int)){
 }
 
 // add fd into epoll
-extern void addfd(int epollfd,int fd,bool one_shot);
+extern void addfd(int epollfd,int fd,bool one_shot,bool ET_mode);
 // remove fd from epoll
 extern void removefd(int epollfd,int fd);
 // modify fd
@@ -73,7 +73,7 @@ int main(int argc, char* argv[]){
     epoll_event events[MAX_EVENT_NUM];
     int epollfd=epoll_create(10);
 
-    addfd(epollfd,listenfd,false);
+    addfd(epollfd,listenfd,false,false);
     http_conn::m_epollfd=epollfd;
     http_conn::m_user_count=0;
 
@@ -91,6 +91,9 @@ int main(int argc, char* argv[]){
                 struct sockaddr_in caddr;
                 socklen_t clen=sizeof(caddr);
                 int connfd=accept(listenfd,(struct sockaddr*)&caddr,&clen);
+                char clientaddr_buf[100];
+                inet_ntop(AF_INET,&caddr.sin_addr.s_addr,clientaddr_buf,sizeof(clientaddr_buf));
+                std::cout<<"client address : "<<clientaddr_buf<<" client port :"<<ntohs(caddr.sin_port)<<std::endl;
                 if(http_conn::m_user_count>=MAX_FD){
                     // server is busy
                     // ... // inform the conneting client
@@ -108,7 +111,6 @@ int main(int argc, char* argv[]){
             else if(events[i].events&EPOLLIN){
                 if(users[sockfd].read()){
                     // read all data
-                    std::cout<<"read request"<<std::endl;
                     pool->add_request(users+sockfd);
                 }
                 else{
@@ -119,8 +121,10 @@ int main(int argc, char* argv[]){
             else if(events[i].events&EPOLLOUT){
                 // write all data
                 if(!users[sockfd].write()){
+                    std::cout<<"write error"<<std::endl;
                     users[sockfd].close_conn();
                 }
+                std::cout<<"write done :)"<<std::endl<<std::endl;
             }
         }
     }
